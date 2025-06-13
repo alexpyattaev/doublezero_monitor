@@ -1,0 +1,43 @@
+
+
+@startuml
+start
+:Set up nftables; <<procedure>>
+:Get list of nodes connected to DZ; <<procedure>>
+if (client using DZ) then (yes)
+:Passive Monitoring;
+:wait for timer; <<input>>
+:Read counters from nftables; <<procedure>>
+
+
+if (check health) then (all ok)
+:Passive Monitoring;
+detach
+else (no)
+:initiate fallback to internet; <<output>>
+:Active Monitoring;
+detach
+endif
+
+else (no)
+:Active Monitoring;
+:wait for timer; <<input>>
+:ping a DZ node over DZ; <<output>>
+split
+:ping reply; <<input>>
+:save reply; <<save>>
+split again
+:ping timeout; <<input>>
+:save timeout; <<save>>
+end split
+
+if (check health) then (all ok)
+:Switch to DZ; <<output>>
+:Passive Monitoring;
+detach
+else (no)
+:Active Monitoring;
+detach
+endif
+@enduml
+
