@@ -13,9 +13,10 @@ from doublezero import doublezero_is_active
 
 
 def get_config()->list['Connection']:
+    """List the connection options. These must match what you have specified in --bind-address to the validator"""
     connections = [
-        Connection(name="Public Internet", ip_address=get_default_ip()),
-        DoubleZeroConnection(name="DoubleZero", ip_address=get_default_ip(), use_active_monitoring=True, preference=100)
+        Connection(index=0, name="Public Internet", ip_address=get_default_ip()),
+        DoubleZeroConnection(index=1, name="DoubleZero", ip_address=get_default_ip(), use_active_monitoring=True, preference=100)
     ]
     return connections
 
@@ -23,6 +24,9 @@ def get_config()->list['Connection']:
 NFT_TABLE = "dz_mon"
 # Which cluster to connect to (fed to solana CLI)
 CLUSTER="mainnet-beta"
+
+# Path to the admin RPC socket of the validator
+ADMIN_RPC_PATH="/home/sol/ledger/admin.rpc"
 
 LAMPORTS_PER_SOL = 1000000000
 # Minimal stake of node for us to care about it
@@ -100,6 +104,7 @@ class HealthRecord:
 
 @dataclasses.dataclass
 class Connection:
+    index: int
     name:str
     ip_address: ipaddress.IPv4Address
     use_active_monitoring: bool = False
@@ -272,7 +277,21 @@ class Monitor:
             if self.connection != live_connections[-1]:
                 self.connection = live_connections[-1]
                 print(f"Switching to preferred connection {self.connection.name}")
-                #TODO: emit signal as appropriate
+                client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                request = f'{"jsonrpc": "2.0", "method": "selectActiveInterface", "params": [{self.connection.index}], "id": 1}'
+                try:
+                    # Connect to the socket file
+                    client.connect(ADMIN_RPC_PATH)
+
+                    # Send the string as bytes
+                    client.sendall(request.encode("utf-8"))
+                    print("Admin RPC request {request} sent successfully.")
+                    response = client.recv(500);
+                    print(f"Received response {response}")
+
+                finally:
+                    client.close()
+
                 await asyncio.sleep(self.switch_debounce_seconds)
             elif self.connection not in live_connections:
                 print("Current connection is DEAD")
