@@ -15,8 +15,8 @@ from doublezero import doublezero_is_active
 def get_config()->list['Connection']:
     """List the connection options. These must match what you have specified in --bind-address to the validator"""
     connections = [
-        Connection(index=0, name="Public Internet", ip_address=get_default_ip()),
-        DoubleZeroConnection(index=1, name="DoubleZero", ip_address=get_default_ip(), use_active_monitoring=True, preference=100)
+        Connection(name="Public Internet", ip_address=get_default_ip()),
+        DoubleZeroConnection(name="DoubleZero", ip_address=get_default_ip(), use_active_monitoring=True, preference=100)
     ]
     return connections
 
@@ -104,7 +104,6 @@ class HealthRecord:
 
 @dataclasses.dataclass
 class Connection:
-    index: int
     name:str
     ip_address: ipaddress.IPv4Address
     use_active_monitoring: bool = False
@@ -278,7 +277,7 @@ class Monitor:
                 self.connection = live_connections[-1]
                 print(f"Switching to preferred connection {self.connection.name}")
                 client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                request = f'{"jsonrpc": "2.0", "method": "selectActiveInterface", "params": [{self.connection.index}], "id": 1}'
+                request = f'{"jsonrpc": "2.0", "method": "selectActiveInterface", "params": [{self.connection.ip_address}], "id": 1}'
                 try:
                     # Connect to the socket file
                     client.connect(ADMIN_RPC_PATH)
