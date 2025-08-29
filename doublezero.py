@@ -10,8 +10,6 @@ async def doublezero_is_active() -> bool:
     )
     return await proc.wait() == 0
 
-
-
 async def get_doublezero_routes()->set[ipaddress.IPv4Address]:
     CMD = "ip route show table main".split(" ")
     proc = await asyncio.create_subprocess_exec(
@@ -22,6 +20,7 @@ async def get_doublezero_routes()->set[ipaddress.IPv4Address]:
     output, _ = await proc.communicate()
     reachable = set()
     for line in output.decode().splitlines():
-        if 'doublezero0' in line:
-            reachable.add(ipaddress.IPv4Address(line.split(' ')[0]))
+        if 'dev doublezero0 proto bgp' in line:
+            line = line.split(' ')[0]
+            reachable.add(ipaddress.IPv4Address(line))
     return reachable
