@@ -197,11 +197,12 @@ class Monitor:
             for pk in to_remove_nodes:
                 print(f"Removing node {pk} from monitored set")
                 self.staked_nodes.pop(pk)
+                n -= 1
                 # TODO: use to_remove_nodes to clean out dead counters in nftables
                 # may need named counters for that
 
             # do not add too many conuters all at once to avoid blocking event loop
-            while len(new_nodes) > 10:
+            while len(new_nodes) > 30:
                 new_nodes.pop()
 
             for pk in new_nodes:
