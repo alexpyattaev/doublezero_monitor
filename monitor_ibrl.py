@@ -255,7 +255,7 @@ class Monitor:
         Goes over the connections ensuring we are using the "best" one.
         """
         # sleep before truly starting this task so we have data to work with
-        await asyncio.sleep(self.caution_period_sec)
+        await asyncio.sleep(self.node_refresh_interval_seconds*4)
         while True:
             await asyncio.sleep(self.decision_check_interval_seconds)
 
