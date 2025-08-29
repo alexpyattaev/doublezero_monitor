@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-from collections import deque
+from collections import defaultdict, deque
 import subprocess
 import json
 import ipaddress
@@ -24,8 +24,7 @@ ADMIN_RPC_PATH="/home/sol/ledger/admin.rpc"
 LAMPORTS_PER_SOL = 1000000000
 # Minimal stake of node for us to care about it
 # Setting this higher reduces overheads of monitoring
-MIN_STAKE_TO_CARE = LAMPORTS_PER_SOL * 100000
-
+MIN_STAKE_TO_CARE = LAMPORTS_PER_SOL * 50000
 
 
 def nft_add_table():
@@ -157,10 +156,10 @@ class DoubleZeroConnection(Connection):
 class Monitor:
     staked_nodes:dict[str, StakedNode] = {}
     connection_dz: Connection
-    decision_check_interval_seconds: float = 1.0
-    passive_monitoring_interval_seconds: float = 1.0
+    decision_check_interval_seconds: float = 2.0
+    passive_monitoring_interval_seconds: float = 2.0
     # how long do we wait before consindering connection dead
-    grace_period_sec: float = 2.0
+    grace_period_sec: float = 4.0
     # how long do we wait before switching back to a connection that was not used
     caution_period_sec: float = 60.0
     # how long time to keep a particular connection after switch is made
@@ -193,6 +192,12 @@ class Monitor:
             await self.connection_dz.update_reachable_nodes()
 
             new_nodes = set(new_staked) - set(self.staked_nodes)
+            for pk in new_nodes.copy():
+                ip = contact_infos[pk]
+                # we only want to track stuff for DZ-reachable nodes
+                if not self.connection_dz.is_reachable(ip):
+                    new_nodes.remove(pk)
+
             to_remove_nodes = set(self.staked_nodes) -  set(new_staked)
             for pk in to_remove_nodes:
                 print(f"Removing node {pk} from monitored set")
@@ -201,12 +206,12 @@ class Monitor:
                 # TODO: use to_remove_nodes to clean out dead counters in nftables
                 # may need named counters for that
 
-            # do not add too many conuters all at once to avoid blocking event loop
-            while len(new_nodes) > 30:
-                new_nodes.pop()
-
+            added = 0
             for pk in new_nodes:
                 ip = contact_infos[pk]
+                # we only want to track counters for DZ-reachable nodes
+                if not self.connection_dz.is_reachable(ip):
+                    continue
                 self.staked_nodes[pk] = StakedNode(stake = new_staked[pk],
                     ip_address=ip,
                     pubkey=pk,
@@ -215,6 +220,10 @@ class Monitor:
                 n+=1
                 print(f"Add counter for {ip}")
                 nft_add_counter(ip)
+                added +=1
+                # do not add too many conuters all at once to avoid blocking event loop
+                if added > 10:
+                    break
             print(f"Added {n} counters")
             await asyncio.sleep(self.node_refresh_interval_seconds)
 
@@ -223,27 +232,36 @@ class Monitor:
         """
         Check NFT counters for incoming traffic on active connections to check their health
         """
+        dead_nodes = defaultdict(int)
         while True:
             await asyncio.sleep(self.passive_monitoring_interval_seconds)
             counters = get_nft_counters()
             reachable_stake = 0.0
             unreachable_stake = 0.0
-            for _pk, node in self.staked_nodes.items():
+            for pk, node in self.staked_nodes.items():
                 cnt = counters.get(node.ip_address,0)
                 diff = cnt - node.packet_count
                 node.packet_count = cnt
                 if not self.connection_dz.is_reachable(node.ip_address):
                     continue
+
+                if node.stake == 0:
+                    print(node)
+                    raise RuntimeError()
                 if diff > 0:
                     reachable_stake += node.stake / LAMPORTS_PER_SOL
                 else:
+                    dead_nodes[pk] += 1
                     unreachable_stake += node.stake / LAMPORTS_PER_SOL
-            if unreachable_stake == unreachable_stake == 0:
+            if unreachable_stake == 0.0 and reachable_stake == 0.0:
                 print("No stake from DZ captured in counters...")
                 continue
             rec = HealthRecord(reachable_stake_fraction=reachable_stake/(1+reachable_stake+unreachable_stake))
             print(f"Passive monitoring of {self.connection_dz.name}: reachable stake {reachable_stake}, unreachable stake: {unreachable_stake} (quality={rec.reachable_stake_fraction:.1%})")
             self.connection_dz.health_records.append(rec)
+            if rec.reachable_stake_fraction < STAKE_THRESHOLD:
+                print(f"missing packet counts per node: {dict(dead_nodes)}")
+                dead_nodes.clear()
 
     async def main(self)->None:
         async with task_group.TaskGroup() as tg:
