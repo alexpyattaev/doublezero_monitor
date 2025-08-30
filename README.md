@@ -1,7 +1,8 @@
 # doublezero_monitor
 
 Super basic daemon to monitor quality of different connections.
-sudo access to `nft` command should be granted to use this.
+sudo access to `nft` command should be granted to use this, alternatively run 
+this script with `CAP_NET_ADMIN`.
 Edit the script to configure the parameters.
 
 ```bash
