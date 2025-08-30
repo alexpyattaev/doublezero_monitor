@@ -1,14 +1,15 @@
 #!/usr/bin/python3
 from collections import defaultdict, deque
-import subprocess
-import json
-import ipaddress
+from doublezero import doublezero_is_active, get_doublezero_routes
+from traceback import print_exc
 import asyncio
 import dataclasses
-from traceback import print_exc
-import time
-from doublezero import doublezero_is_active, get_doublezero_routes
+import ipaddress
+import json
+import os
+import subprocess
 import task_group
+import time
 
 # Table to create in nftables
 NFT_TABLE = "dz_mon"
@@ -27,18 +28,25 @@ LAMPORTS_PER_SOL = 1000000000
 MIN_STAKE_TO_CARE = LAMPORTS_PER_SOL * 50000
 
 
+# Set sudo command to blank if in systemd (since then we are root)
+if os.geteuid() == 0:
+    SUDO=""
+else:
+    SUDO="sudo "
+
+
 def nft_add_table():
-    CMD=f"sudo nft add table inet {NFT_TABLE}"
+    CMD=f"{SUDO}nft add table inet {NFT_TABLE}"
     subprocess.check_call(CMD.split(" "))
-    CMD=f"sudo nft add chain inet {NFT_TABLE} " + r" input { type filter hook input priority 0 \; }"
+    CMD=f"{SUDO}nft add chain inet {NFT_TABLE} " + r" input { type filter hook input priority 0 \; }"
     subprocess.check_call(CMD, shell=True)
 
 def nft_drop_table():
-    CMD=f"sudo nft delete table inet {NFT_TABLE}"
+    CMD=f"{SUDO}nft delete table inet {NFT_TABLE}"
     subprocess.call(CMD.split(" "))
 
 def get_nft_counters()->dict[ipaddress.IPv4Address, int]:
-    CMD=f"sudo nft -j list chain inet {NFT_TABLE} input"
+    CMD=f"{SUDO}nft -j list chain inet {NFT_TABLE} input"
     counters = {}
     try:
         (status, output) = subprocess.getstatusoutput(CMD)
@@ -56,7 +64,7 @@ def get_nft_counters()->dict[ipaddress.IPv4Address, int]:
         return counters
 
 def nft_add_counter(ip:ipaddress.IPv4Address):
-    CMD = f"sudo nft add rule inet {NFT_TABLE} input ip saddr {ip} counter"
+    CMD = f"{SUDO} nft add rule inet {NFT_TABLE} input ip saddr {ip} counter"
     (status, output) = subprocess.getstatusoutput(CMD)
 
 async def get_staked_nodes():
@@ -193,9 +201,11 @@ class Monitor:
 
             new_nodes = set(new_staked) - set(self.staked_nodes)
             for pk in new_nodes.copy():
-                ip = contact_infos[pk]
+                ip = contact_infos.get(pk)
+                if ip is None:
+                    new_nodes.remove(pk)
                 # we only want to track stuff for DZ-reachable nodes
-                if not self.connection_dz.is_reachable(ip):
+                elif not self.connection_dz.is_reachable(ip):
                     new_nodes.remove(pk)
 
             to_remove_nodes = set(self.staked_nodes) -  set(new_staked)
@@ -222,7 +232,7 @@ class Monitor:
                 nft_add_counter(ip)
                 added +=1
                 # do not add too many conuters all at once to avoid blocking event loop
-                if added > 10:
+                if added >= 10:
                     break
             print(f"Added {n} counters")
             await asyncio.sleep(self.node_refresh_interval_seconds)
@@ -257,7 +267,7 @@ class Monitor:
                 print("No stake from DZ captured in counters...")
                 continue
             rec = HealthRecord(reachable_stake_fraction=reachable_stake/(1+reachable_stake+unreachable_stake))
-            print(f"Passive monitoring of {self.connection_dz.name}: reachable stake {reachable_stake}, unreachable stake: {unreachable_stake} (quality={rec.reachable_stake_fraction:.1%})")
+            print(f"Monitoring: stake reachable {int(reachable_stake)}/{int(reachable_stake + unreachable_stake)} ({rec.reachable_stake_fraction:.1%})")
             self.connection_dz.health_records.append(rec)
             if rec.reachable_stake_fraction < STAKE_THRESHOLD:
                 print(f"missing packet counts per node: {dict(dead_nodes)}")
