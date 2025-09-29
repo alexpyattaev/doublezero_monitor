@@ -1,3 +1,4 @@
+# Minimal impl for TaskGroup to avoid deps
 import asyncio
 from contextlib import AbstractAsyncContextManager
 

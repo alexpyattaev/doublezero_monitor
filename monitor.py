@@ -1,16 +1,16 @@
 #!/usr/bin/python3
 from collections import deque
-import subprocess
 import json
 import ipaddress
 import asyncio
 import dataclasses
-from traceback import print_exc
 import socket
 import ping
 import time
 from doublezero import doublezero_is_active
-
+import task_group
+from config import *
+from helpers import *
 
 def get_config()->list['Connection']:
     """List the connection options. These must match what you have specified in --bind-address to the validator"""
@@ -20,49 +20,6 @@ def get_config()->list['Connection']:
     ]
     return connections
 
-# Table to create in nftables
-NFT_TABLE = "dz_mon"
-# Which cluster to connect to (fed to solana CLI)
-CLUSTER="mainnet-beta"
-
-# Path to the admin RPC socket of the validator
-ADMIN_RPC_PATH="/home/sol/ledger/admin.rpc"
-
-LAMPORTS_PER_SOL = 1000000000
-# Minimal stake of node for us to care about it
-# Setting this higher reduces overheads of monitoring
-MIN_STAKE_TO_CARE = LAMPORTS_PER_SOL * 100000
-
-
-
-def nft_add_table():
-    CMD=f"sudo nft add table inet {NFT_TABLE}"
-    subprocess.check_call(CMD.split(" "))
-    CMD=f"sudo nft add chain inet {NFT_TABLE} " + r" input { type filter hook input priority 0 \; }"
-    subprocess.check_call(CMD, shell=True)
-
-def nft_drop_table():
-    CMD=f"sudo nft delete table inet {NFT_TABLE}"
-    subprocess.call(CMD.split(" "))
-
-def get_nft_counters()->dict[ipaddress.IPv4Address, int]:
-    CMD=f"sudo nft -j list chain inet {NFT_TABLE} input"
-    counters = {}
-    try:
-        (status, output) = subprocess.getstatusoutput(CMD)
-        x = json.loads(output)
-        for row in x['nftables']:
-            if 'rule' not in row:
-                continue
-            expr = row['rule']['expr']
-            source = ipaddress.IPv4Address(expr[0]['match']['right'])
-            counter =expr[1]['counter']['packets']
-            counters[source] = counter
-    except:
-        print_exc()
-    finally:
-        return counters
-
 def get_default_ip()-> ipaddress.IPv4Address:
     # Doesn't actually connect — just figures out the outbound IP
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -70,25 +27,6 @@ def get_default_ip()-> ipaddress.IPv4Address:
     ip = ipaddress.IPv4Address(s.getsockname()[0])
     s.close()
     return ip
-
-def nft_add_counter(ip:ipaddress.IPv4Address):
-    CMD = f"sudo nft add rule inet {NFT_TABLE} input ip saddr {ip} counter"
-    (status, output) = subprocess.getstatusoutput(CMD)
-
-async def get_staked_nodes():
-    CMD = f"-u{CLUSTER} validators --output json"
-    proc = await asyncio.create_subprocess_exec("solana", *CMD.split(" "), stdout=asyncio.subprocess.PIPE,
-           stderr=asyncio.subprocess.PIPE)
-    stdout, stderr = await proc.communicate()
-    output = json.loads(stdout)
-    return {v['identityPubkey']:v['activatedStake'] for v in output["validators"]  if v['activatedStake'] > MIN_STAKE_TO_CARE and not v['delinquent']}
-
-async def get_contact_infos()->dict[str, ipaddress.IPv4Address]:
-    CMD = f"-u{CLUSTER} gossip --output json"
-    proc = await asyncio.create_subprocess_exec("solana", *CMD.split(" "), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    stdout, stderr = await proc.communicate()
-    output = json.loads(stdout)
-    return  {v['identityPubkey']:ipaddress.IPv4Address( v['ipAddress']) for v in output if 'tpuPort' in v}
 
 @dataclasses.dataclass
 class StakedNode:
@@ -241,7 +179,7 @@ class Monitor:
             await asyncio.sleep(self.passive_monitoring_interval_seconds)
 
     async def main(self)->None:
-        async with asyncio.TaskGroup() as tg:
+        async with task_group.TaskGroup() as tg:
             tg.create_task(self.refresh_staked_nodes())
             tg.create_task(self.passive_monitoring())
             tg.create_task(self.active_monitoring())

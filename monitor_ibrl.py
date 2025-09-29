@@ -1,86 +1,14 @@
 #!/usr/bin/python3
 from collections import defaultdict, deque
 from doublezero import doublezero_is_active, get_doublezero_routes
-from traceback import print_exc
 import asyncio
 import dataclasses
 import ipaddress
-import json
-import os
 import subprocess
 import task_group
 import time
-
-# Table to create in nftables
-NFT_TABLE = "dz_mon"
-# Which cluster to connect to (fed to solana CLI)
-CLUSTER="testnet"
-
-# how much stake do we need to observe to consider connection "good"
-STAKE_THRESHOLD: float = 0.9
-
-# Path to the admin RPC socket of the validator
-ADMIN_RPC_PATH="/home/sol/ledger/admin.rpc"
-
-LAMPORTS_PER_SOL = 1000000000
-# Minimal stake of node for us to care about it
-# Setting this higher reduces overheads of monitoring
-MIN_STAKE_TO_CARE = LAMPORTS_PER_SOL * 50000
-
-
-# Set sudo command to blank if in systemd (since then we are root)
-if os.geteuid() == 0:
-    SUDO=""
-else:
-    SUDO="sudo "
-
-
-def nft_add_table():
-    CMD=f"{SUDO}nft add table inet {NFT_TABLE}"
-    subprocess.check_call(CMD.split(" "))
-    CMD=f"{SUDO}nft add chain inet {NFT_TABLE} " + r" input { type filter hook input priority 0 \; }"
-    subprocess.check_call(CMD, shell=True)
-
-def nft_drop_table():
-    CMD=f"{SUDO}nft delete table inet {NFT_TABLE}"
-    subprocess.call(CMD.split(" "))
-
-def get_nft_counters()->dict[ipaddress.IPv4Address, int]:
-    CMD=f"{SUDO}nft -j list chain inet {NFT_TABLE} input"
-    counters = {}
-    try:
-        (status, output) = subprocess.getstatusoutput(CMD)
-        x = json.loads(output)
-        for row in x['nftables']:
-            if 'rule' not in row:
-                continue
-            expr = row['rule']['expr']
-            source = ipaddress.IPv4Address(expr[0]['match']['right'])
-            counter =expr[1]['counter']['packets']
-            counters[source] = counter
-    except:
-        print_exc()
-    finally:
-        return counters
-
-def nft_add_counter(ip:ipaddress.IPv4Address):
-    CMD = f"{SUDO} nft add rule inet {NFT_TABLE} input ip saddr {ip} counter"
-    (status, output) = subprocess.getstatusoutput(CMD)
-
-async def get_staked_nodes():
-    CMD = f"-u{CLUSTER} validators --output json"
-    proc = await asyncio.create_subprocess_exec("solana", *CMD.split(" "), stdout=asyncio.subprocess.PIPE,
-           stderr=asyncio.subprocess.PIPE)
-    stdout, stderr = await proc.communicate()
-    output = json.loads(stdout)
-    return {v['identityPubkey']:v['activatedStake'] for v in output["validators"]  if v['activatedStake'] > MIN_STAKE_TO_CARE and not v['delinquent']}
-
-async def get_contact_infos()->dict[str, ipaddress.IPv4Address]:
-    CMD = f"-u{CLUSTER} gossip --output json"
-    proc = await asyncio.create_subprocess_exec("solana", *CMD.split(" "), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    stdout, stderr = await proc.communicate()
-    output = json.loads(stdout)
-    return  {v['identityPubkey']:ipaddress.IPv4Address( v['ipAddress']) for v in output if 'tpuPort' in v}
+from config import *
+from helpers import *
 
 @dataclasses.dataclass
 class StakedNode:
@@ -101,51 +29,21 @@ class HealthRecord:
         return f"({self.reachable_stake_fraction*100}% at {self.timestamp})"
 
 @dataclasses.dataclass
-class Connection:
-    name:str
+class DZConnection:
     reachable_ips: set[ipaddress.IPv4Address] = dataclasses.field(default_factory=set)
     health_records: deque[HealthRecord] = dataclasses.field(default_factory=lambda : deque(maxlen=100))
 
-    async def update_reachable_nodes(self):
-        return
-
-    def is_reachable(self, ip:ipaddress.IPv4Address)->bool:
-        return True
-
-    async def self_check(self)->bool:
-        return True
-
-    def get_best_in_period(self, grace_period:float)->float:
+    def get_best_in_period(self, grace_period_seconds:float)->float:
+        """Returns best quality observed in provided period, and 0
+        if no observations were made."""
         now = time.time()
         best_in_grace_period = 0.0
         for rec in self.health_records:
             age = now - rec.timestamp
-            if age < grace_period:
+            if age < grace_period_seconds:
                 best_in_grace_period = max(best_in_grace_period, rec.reachable_stake_fraction)
         return best_in_grace_period
 
-    def mean_in_period(self, period:float)->float:
-        now = time.time()
-        records = []
-        for rec in self.health_records:
-            age = now - rec.timestamp
-            if age< period:
-                records.append(rec.reachable_stake_fraction)
-        if not records:
-            return 0.0
-        return sum(records)/ len(records)
-
-    def get_worst_in_period(self, caution_period: float)->float:
-        now = time.time()
-        worst_in_caution_period = None
-        for rec in self.health_records:
-            age = now - rec.timestamp
-            if age < caution_period:
-                worst_in_caution_period = min(worst_in_caution_period, rec.reachable_stake_fraction) if worst_in_caution_period is not None else rec.reachable_stake_fraction
-        return 0.0 if worst_in_caution_period is None else worst_in_caution_period
-
-@dataclasses.dataclass
-class DoubleZeroConnection(Connection):
     async def self_check(self) -> bool:
         status = await doublezero_is_active()
         if not status:
@@ -163,27 +61,17 @@ class DoubleZeroConnection(Connection):
 
 class Monitor:
     staked_nodes:dict[str, StakedNode] = {}
-    connection_dz: Connection
-    decision_check_interval_seconds: float = 2.0
-    passive_monitoring_interval_seconds: float = 2.0
-    # how long do we wait before consindering connection dead
-    grace_period_sec: float = 4.0
-    # how long do we wait before switching back to a connection that was not used
-    caution_period_sec: float = 60.0
-    # how long time to keep a particular connection after switch is made
-    switch_debounce_seconds: float = 60.0
-    # Interval between refreshes of gossip tables via RPC
-    node_refresh_interval_seconds: float = 60.0
+    connection: DZConnection
 
     def __init__(self) -> None:
-        self.connection_dz = DoubleZeroConnection(name="DoubleZero")
+        self.connection = DZConnection()
 
     def __enter__(self):
         print("Setting up nftables")
         nft_add_table()
         return self
 
-    def __exit__(self,exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback):
         print("Cleaning up")
         nft_drop_table()
 
@@ -197,7 +85,7 @@ class Monitor:
             contact_infos = await get_contact_infos()
             new_staked = await get_staked_nodes()
 
-            await self.connection_dz.update_reachable_nodes()
+            await self.connection.update_reachable_nodes()
 
             new_nodes = set(new_staked) - set(self.staked_nodes)
             for pk in new_nodes.copy():
@@ -205,7 +93,7 @@ class Monitor:
                 if ip is None:
                     new_nodes.remove(pk)
                 # we only want to track stuff for DZ-reachable nodes
-                elif not self.connection_dz.is_reachable(ip):
+                elif not self.connection.is_reachable(ip):
                     new_nodes.remove(pk)
 
             to_remove_nodes = set(self.staked_nodes) -  set(new_staked)
@@ -220,7 +108,7 @@ class Monitor:
             for pk in new_nodes:
                 ip = contact_infos[pk]
                 # we only want to track counters for DZ-reachable nodes
-                if not self.connection_dz.is_reachable(ip):
+                if not self.connection.is_reachable(ip):
                     continue
                 self.staked_nodes[pk] = StakedNode(stake = new_staked[pk],
                     ip_address=ip,
@@ -235,16 +123,16 @@ class Monitor:
                 if added >= 10:
                     break
             print(f"Added {n} counters")
-            await asyncio.sleep(self.node_refresh_interval_seconds)
+            await asyncio.sleep(NODE_REFRESH_INTERVAL_SECONDS)
 
 
     async def passive_monitoring(self)->None:
         """
         Check NFT counters for incoming traffic on active connections to check their health
         """
-        dead_nodes = defaultdict(int)
+        dead_nodes:defaultdict[str, int] = defaultdict(int)
         while True:
-            await asyncio.sleep(self.passive_monitoring_interval_seconds)
+            await asyncio.sleep(PASSIVE_MONITORING_INTERVAL_SECONDS)
             counters = get_nft_counters()
             reachable_stake = 0.0
             unreachable_stake = 0.0
@@ -252,7 +140,7 @@ class Monitor:
                 cnt = counters.get(node.ip_address,0)
                 diff = cnt - node.packet_count
                 node.packet_count = cnt
-                if not self.connection_dz.is_reachable(node.ip_address):
+                if not self.connection.is_reachable(node.ip_address):
                     continue
 
                 if node.stake == 0:
@@ -268,7 +156,7 @@ class Monitor:
                 continue
             rec = HealthRecord(reachable_stake_fraction=reachable_stake/(1+reachable_stake+unreachable_stake))
             print(f"Monitoring: stake reachable {int(reachable_stake)}/{int(reachable_stake + unreachable_stake)} ({rec.reachable_stake_fraction:.1%})")
-            self.connection_dz.health_records.append(rec)
+            self.connection.health_records.append(rec)
             if rec.reachable_stake_fraction < STAKE_THRESHOLD:
                 print(f"missing packet counts per node: {dict(dead_nodes)}")
                 dead_nodes.clear()
@@ -284,20 +172,20 @@ class Monitor:
         Goes over the connections ensuring we are using the "best" one.
         """
         # sleep before truly starting this task so we have data to work with
-        await asyncio.sleep(self.node_refresh_interval_seconds*4)
+        await asyncio.sleep(NODE_REFRESH_INTERVAL_SECONDS*4)
         while True:
-            await asyncio.sleep(self.decision_check_interval_seconds)
+            await asyncio.sleep(PASSIVE_MONITORING_INTERVAL_SECONDS)
 
             # check for obvious issues
-            if not await self.connection_dz.self_check():
+            if not await self.connection.self_check():
                 print("DZ already disabled")
                 continue
 
             # check if we can still reach target % of stake
-            if self.connection_dz.get_best_in_period(self.grace_period_sec) < STAKE_THRESHOLD:
+            if self.connection.get_best_in_period(GRACE_PERIOD_SEC) < STAKE_THRESHOLD:
                 print("Failure condition detected: Disconnecting DZ")
                 subprocess.call("doublezero disconnect", shell=True)
-                print(self.connection_dz.health_records)
+                print(self.connection.health_records)
                 exit(1)
 
 if __name__=="__main__":
