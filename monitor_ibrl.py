@@ -4,7 +4,6 @@ from doublezero import doublezero_is_active, get_doublezero_routes
 import asyncio
 import dataclasses
 import ipaddress
-import subprocess
 import task_group
 import time
 from config import *

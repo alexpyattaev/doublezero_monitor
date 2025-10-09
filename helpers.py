@@ -55,4 +55,4 @@ async def get_contact_infos()->dict[str, ipaddress.IPv4Address]:
     return  {v['identityPubkey']:ipaddress.IPv4Address( v['ipAddress']) for v in output if 'tpuPort' in v}
 
 def kill_dz_interface()->None:
-    subprocess.call(f"{SUDO} ip link set doublezero0 down", shell=True)
+    subprocess.call(f"{SUDO}ip link set doublezero0 down", shell=True)

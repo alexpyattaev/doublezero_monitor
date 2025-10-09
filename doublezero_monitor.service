@@ -17,4 +17,3 @@ Restart=no
 
 [Install]
 WantedBy=doublezerod.service
-
