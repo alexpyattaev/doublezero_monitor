@@ -184,7 +184,7 @@ class Monitor:
             # check if we can still reach target % of stake
             if self.connection.get_best_in_period(GRACE_PERIOD_SEC) < STAKE_THRESHOLD:
                 print("Failure condition detected: Disconnecting DZ")
-                subprocess.call("doublezero disconnect", shell=True)
+                kill_dz_interface()
                 print(self.connection.health_records)
                 exit(1)
 
