@@ -42,6 +42,10 @@ use
 Once the script disconnects DZ, it will not automatically reconnect it, as it has no way to test if
 DZ is back or not short of switching the validator to a potentially broken configuration.
 
+When this script disconnects DZ, it does so by issuing `ip link set doublezero0 down` command.
+To reenable DZ after it was disconnected, call `ip link set doublezero0 up` and restart the
+monitoring service.
+
 ## For edge filtration mode
 
 use

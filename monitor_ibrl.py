@@ -184,7 +184,7 @@ class Monitor:
         Goes over the connections ensuring we are using the "best" one.
         """
         # sleep before truly starting this task so we have data to work with
-        await asyncio.sleep(NODE_REFRESH_INTERVAL_SECONDS * 4)
+        await asyncio.sleep(WARMUP_PERIOD)
         while True:
             await asyncio.sleep(PASSIVE_MONITORING_INTERVAL_SECONDS)
 

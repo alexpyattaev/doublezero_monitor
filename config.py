@@ -15,7 +15,7 @@ NODE_REFRESH_INTERVAL_SECONDS: float = 60.0
 # Path to the admin RPC socket of the validator
 ADMIN_RPC_PATH = "/home/sol/ledger/admin.rpc"
 
-# Parameters you should probably not tune
+# Parameters below you should probably not tune
 
 # Table to create in nftables
 NFT_TABLE = "dz_mon"
@@ -24,3 +24,7 @@ LAMPORTS_PER_SOL = 1000000000
 # Minimal stake of node for us to care about it
 # Setting this higher reduces overheads of monitoring
 MIN_STAKE_TO_CARE = LAMPORTS_PER_SOL * 50000
+
+# Amount of time to collect statistics after startup before
+# enabling the checking logic
+WARMUP_PERIOD = NODE_REFRESH_INTERVAL_SECONDS * 4
