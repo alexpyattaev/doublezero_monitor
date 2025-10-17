@@ -87,7 +87,6 @@ class Monitor:
         Refresh list of staked nodes, update NFT counters accordingly
         """
         while True:
-            n = 0
             print("Refreshing staked nodes")
             contact_infos = await get_contact_infos()
             new_staked = await get_staked_nodes()
@@ -106,10 +105,9 @@ class Monitor:
             to_remove_nodes = set(self.staked_nodes) - set(new_staked)
             for pk in to_remove_nodes:
                 print(f"Removing node {pk} from monitored set")
-                self.staked_nodes.pop(pk)
-                n -= 1
-                # TODO: use to_remove_nodes to clean out dead counters in nftables
-                # may need named counters for that
+                node = self.staked_nodes.pop(pk)
+                # try to clean the counter in nftables
+                nft_del_counter(node.ip_address)
 
             added = 0
             for pk in new_nodes:
@@ -123,14 +121,13 @@ class Monitor:
                     pubkey=pk,
                     packet_count=0,
                 )
-                n += 1
                 print(f"Add counter for {ip}")
                 nft_add_counter(ip)
                 added += 1
                 # do not add too many conuters all at once to avoid blocking event loop
                 if added >= 10:
                     break
-            print(f"Added {n} counters")
+            print(f"Added {added}, removed {len(to_remove_nodes)} counters")
             await asyncio.sleep(NODE_REFRESH_INTERVAL_SECONDS)
 
     async def passive_monitoring(self) -> None:

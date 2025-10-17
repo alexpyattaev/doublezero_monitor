@@ -1,7 +1,7 @@
 # doublezero monitor
 
-Simple daemon to monitor quality of DZ connection and detect subtle failure modes that
-DZ daemon can not detect on its own.
+Simple daemon to monitor quality of [DoubleZero](https://doublezero.xyz/) connection
+and detect subtle failure modes that `doublezerod` daemon can not detect on its own.
 
 *These scripts may modify nftables state and may interact with the validator*.
 Please understand what the entire script does before running it to make sure it will not break
@@ -12,9 +12,23 @@ from a sufficintly high % of stake, it will disconnect DZ "just in case".
 
 This will not trigger on minor DZ packet loss, only substantial failures in the network configuration.
 
-
 ## Installation
 
+### Ubuntu
+Malbec Labs maintain a PPA which includes releases of this tool:
+```bash
+curl -1sLf https://dl.cloudsmith.io/public/malbeclabs/doublezero/setup.deb.sh | sudo -E bash
+sudo apt-get install doublezero-monitor-tool
+```
+
+### Redhat
+Malbec Labs maintain a repository which includes releases of this tool:
+```bash
+curl -1sLf https://dl.cloudsmith.io/public/malbeclabs/doublezero/setup.rpm.sh | sudo -E bash
+sudo yum install doublezero-monitor-tool
+```
+
+### Manually
 You can run the script from an unpriviledged user account or as root.
 Sudo access to the `nft` and `ip` commands should be granted to use this as an
 unpriviledged user.
@@ -31,7 +45,6 @@ sudo cp doublezero_monitor.service /etc/systemd/system/
 ```
 
 Keep in mind that when running as system service, the script will run as root.
-
 
 ## For IBRL mode
 

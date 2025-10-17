@@ -45,10 +45,18 @@ def get_nft_counters() -> dict[ipaddress.IPv4Address, int]:
         return counters
 
 
-def nft_add_counter(ip: ipaddress.IPv4Address):
-    cmd = f"{SUDO} nft add rule inet {NFT_TABLE} input ip saddr {ip} counter"
+def nft_add_counter(ip: ipaddress.IPv4Address)->None:
+    cmd = f"{SUDO}nft add rule inet {NFT_TABLE} input ip saddr {ip} counter"
     (_status, _output) = subprocess.getstatusoutput(cmd)
 
+def nft_del_counter(ip: ipaddress.IPv4Address)->None:
+    cmd = f"{SUDO}nft -a list chain inet {NFT_TABLE} input"
+    (_status, output) = subprocess.getstatusoutput(cmd)
+    for line in output.splitlines():
+        if str(ip) in line:
+            handle = line.split("# handle")[1]
+            cmd = f"{SUDO}nft delete rule inet {NFT_TABLE} input handle {handle}"
+            (_status, _output) = subprocess.getstatusoutput(cmd)
 
 async def get_staked_nodes() -> dict[str, int]:
     output = await get_from_RPC("getVoteAccounts")
