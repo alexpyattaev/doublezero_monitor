@@ -12,15 +12,22 @@ import task_group
 from config import *
 from helpers import *
 
-def get_config()->list['Connection']:
+
+def get_config() -> list["Connection"]:
     """List the connection options. These must match what you have specified in --bind-address to the validator"""
     connections = [
         Connection(name="Public Internet", ip_address=get_default_ip()),
-        DoubleZeroConnection(name="DoubleZero", ip_address=get_default_ip(), use_active_monitoring=True, preference=100)
+        DoubleZeroConnection(
+            name="DoubleZero",
+            ip_address=get_default_ip(),
+            use_active_monitoring=True,
+            preference=100,
+        ),
     ]
     return connections
 
-def get_default_ip()-> ipaddress.IPv4Address:
+
+def get_default_ip() -> ipaddress.IPv4Address:
     # Doesn't actually connect — just figures out the outbound IP
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.connect(("8.8.8.8", 80))  # Google DNS
@@ -28,57 +35,69 @@ def get_default_ip()-> ipaddress.IPv4Address:
     s.close()
     return ip
 
+
 @dataclasses.dataclass
 class StakedNode:
-    pubkey:str
+    pubkey: str
     ip_address: ipaddress.IPv4Address
     stake: int
     packet_count: int
+
 
 @dataclasses.dataclass
 class HealthRecord:
     reachable_stake_fraction: float
     timestamp: float = dataclasses.field(default_factory=time.time)
 
+
 @dataclasses.dataclass
 class Connection:
-    name:str
+    name: str
     ip_address: ipaddress.IPv4Address
     use_active_monitoring: bool = False
     preference: int = 0
-    health_records: deque[HealthRecord] = dataclasses.field(default_factory=lambda : deque(maxlen=100))
+    health_records: deque[HealthRecord] = dataclasses.field(
+        default_factory=lambda: deque(maxlen=100)
+    )
 
-    async def self_check(self)->bool:
+    async def self_check(self) -> bool:
         return True
 
-    def get_best_in_period(self, grace_period:float)->float:
+    def get_best_in_period(self, grace_period: float) -> float:
         now = time.time()
         best_in_grace_period = 0.0
         for rec in self.health_records:
             age = now - rec.timestamp
             if age < grace_period:
-                best_in_grace_period = max(best_in_grace_period, rec.reachable_stake_fraction)
+                best_in_grace_period = max(
+                    best_in_grace_period, rec.reachable_stake_fraction
+                )
         return best_in_grace_period
 
-    def mean_in_period(self, period:float)->float:
+    def mean_in_period(self, period: float) -> float:
         now = time.time()
         records = []
         for rec in self.health_records:
             age = now - rec.timestamp
-            if age< period:
+            if age < period:
                 records.append(rec.reachable_stake_fraction)
         if not records:
             return 0.0
-        return sum(records)/ len(records)
+        return sum(records) / len(records)
 
-    def get_worst_in_period(self, caution_period: float)->float:
+    def get_worst_in_period(self, caution_period: float) -> float:
         now = time.time()
         worst_in_caution_period = None
         for rec in self.health_records:
             age = now - rec.timestamp
             if age < caution_period:
-                worst_in_caution_period = min(worst_in_caution_period, rec.reachable_stake_fraction) if worst_in_caution_period is not None else rec.reachable_stake_fraction
+                worst_in_caution_period = (
+                    min(worst_in_caution_period, rec.reachable_stake_fraction)
+                    if worst_in_caution_period is not None
+                    else rec.reachable_stake_fraction
+                )
         return 0.0 if worst_in_caution_period is None else worst_in_caution_period
+
 
 @dataclasses.dataclass
 class DoubleZeroConnection(Connection):
@@ -89,7 +108,7 @@ class DoubleZeroConnection(Connection):
 
 
 class Monitor:
-    staked_nodes:dict[str, StakedNode] = {}
+    staked_nodes: dict[str, StakedNode] = {}
     connection: Connection
     connections: list[Connection]
     decision_check_interval_seconds: float = 1.0
@@ -116,10 +135,9 @@ class Monitor:
         nft_add_table()
         return self
 
-    def __exit__(self,exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback):
         print("Cleaning up")
         nft_drop_table()
-
 
     async def refresh_staked_nodes(self):
         """
@@ -132,7 +150,7 @@ class Monitor:
             new_staked = await get_staked_nodes()
 
             new_nodes = set(new_staked) - set(self.staked_nodes)
-            to_remove_nodes = set(self.staked_nodes) -  set(new_staked)
+            to_remove_nodes = set(self.staked_nodes) - set(new_staked)
             for pk in to_remove_nodes:
                 print(f"Removing node {pk} from monitored set")
                 self.staked_nodes.pop(pk)
@@ -145,19 +163,19 @@ class Monitor:
 
             for pk in new_nodes:
                 ip = contact_infos[pk]
-                self.staked_nodes[pk] = StakedNode(stake = new_staked[pk],
+                self.staked_nodes[pk] = StakedNode(
+                    stake=new_staked[pk],
                     ip_address=ip,
                     pubkey=pk,
-                    packet_count = 0,
+                    packet_count=0,
                 )
-                n+=1
+                n += 1
                 print(f"Add counter for {ip}")
                 nft_add_counter(ip)
             print(f"Added {n} counters")
             await asyncio.sleep(self.node_refresh_interval_seconds)
 
-
-    async def passive_monitoring(self)->None:
+    async def passive_monitoring(self) -> None:
         """
         Check NFT counters for incoming traffic on active connections to check their health
         """
@@ -166,34 +184,39 @@ class Monitor:
             reachable_stake = 0
             unreachable_stake = 0
             for pk, node in self.staked_nodes.items():
-                cnt = counters.get(node.ip_address,0)
+                cnt = counters.get(node.ip_address, 0)
                 diff = cnt - node.packet_count
                 node.packet_count = cnt
                 if diff > 0:
                     reachable_stake += node.stake / LAMPORTS_PER_SOL
                 else:
                     unreachable_stake += node.stake / LAMPORTS_PER_SOL
-            rec = HealthRecord(reachable_stake_fraction=reachable_stake/(1+reachable_stake+unreachable_stake))
-            print(f"Passive monitoring of {self.connection.name}: reachable stake {reachable_stake}, unreachable stake: {unreachable_stake} (quality={rec.reachable_stake_fraction:.1%})")
+            rec = HealthRecord(
+                reachable_stake_fraction=reachable_stake
+                / (1 + reachable_stake + unreachable_stake)
+            )
+            print(
+                f"Passive monitoring of {self.connection.name}: reachable stake {reachable_stake}, unreachable stake: {unreachable_stake} (quality={rec.reachable_stake_fraction:.1%})"
+            )
             self.connection.health_records.append(rec)
             await asyncio.sleep(self.passive_monitoring_interval_seconds)
 
-    async def main(self)->None:
+    async def main(self) -> None:
         async with task_group.TaskGroup() as tg:
             tg.create_task(self.refresh_staked_nodes())
             tg.create_task(self.passive_monitoring())
             tg.create_task(self.active_monitoring())
             tg.create_task(self.decision())
 
-    async def decision(self)->None:
+    async def decision(self) -> None:
         """
         Goes over the connections ensuring we are using the "best" one.
         """
         # sleep before truly starting this task so we have data to work with
         await asyncio.sleep(self.caution_period_sec)
         while True:
-            #live_connections:list[tuple[float, Connection]] = []
-            live_connections:list[Connection] = []
+            # live_connections:list[tuple[float, Connection]] = []
+            live_connections: list[Connection] = []
 
             for conn in self.connections:
                 # check for obvious issues
@@ -202,12 +225,18 @@ class Monitor:
 
                 if self.connection == conn:
                     # check if we can still reach target % of stake
-                    if conn.get_best_in_period(self.grace_period_sec) > self.stake_threshold:
-                        #quality = conn.mean_in_period(self.caution_period_sec)
+                    if (
+                        conn.get_best_in_period(self.grace_period_sec)
+                        > self.stake_threshold
+                    ):
+                        # quality = conn.mean_in_period(self.caution_period_sec)
                         live_connections.append(conn)
                 else:
-                    if conn.get_worst_in_period(self.caution_period_sec) > self.stake_threshold:
-                        #quality = conn.mean_in_period(self.caution_period_sec)
+                    if (
+                        conn.get_worst_in_period(self.caution_period_sec)
+                        > self.stake_threshold
+                    ):
+                        # quality = conn.mean_in_period(self.caution_period_sec)
                         live_connections.append(conn)
 
             live_connections.sort(key=lambda c: c.preference)
@@ -223,7 +252,7 @@ class Monitor:
                     # Send the string as bytes
                     client.sendall(request.encode("utf-8"))
                     print("Admin RPC request {request} sent successfully.")
-                    response = client.recv(500);
+                    response = client.recv(500)
                     print(f"Received response {response}")
 
                 finally:
@@ -236,21 +265,20 @@ class Monitor:
                     if self.connection != self.connections[0]:
                         print("No connections are good, switching to default")
                         self.connection = self.connections[0]
-                        #TODO: emit signal as appropriate
+                        # TODO: emit signal as appropriate
                         await asyncio.sleep(self.switch_debounce_seconds)
                 else:
                     self.connection = live_connections[-1]
                     print(f"Switching to {self.connection.name}")
-                    #TODO: emit signal as appropriate
+                    # TODO: emit signal as appropriate
                     await asyncio.sleep(self.switch_debounce_seconds)
 
             await asyncio.sleep(self.decision_check_interval_seconds)
 
-
-    async def active_monitoring(self)->None:
+    async def active_monitoring(self) -> None:
         """
-            Monitor connection quality by actively pinging hosts
-            This is needed when connection is not active and no traffic can be expected
+        Monitor connection quality by actively pinging hosts
+        This is needed when connection is not active and no traffic can be expected
         """
         while True:
             for conn in self.connections:
@@ -270,19 +298,25 @@ class Monitor:
                 ping_results = await asyncio.gather(*tasks)
                 reachable_stake = 0
                 unreachable_stake = 0
-                for (pr, stake) in zip(ping_results, stakes):
+                for pr, stake in zip(ping_results, stakes):
                     if pr:
                         reachable_stake += stake / LAMPORTS_PER_SOL
                     else:
                         unreachable_stake += stake / LAMPORTS_PER_SOL
 
-                rec = HealthRecord(reachable_stake_fraction=reachable_stake/(1+reachable_stake+unreachable_stake))
-                print(f"Active monitoring of {conn.name}: reachable stake {reachable_stake}, unreachable stake: {unreachable_stake} (quality={rec.reachable_stake_fraction:.1%})")
+                rec = HealthRecord(
+                    reachable_stake_fraction=reachable_stake
+                    / (1 + reachable_stake + unreachable_stake)
+                )
+                print(
+                    f"Active monitoring of {conn.name}: reachable stake {reachable_stake}, unreachable stake: {unreachable_stake} (quality={rec.reachable_stake_fraction:.1%})"
+                )
                 conn.health_records.append(rec)
 
             await asyncio.sleep(self.active_monitoring_interval_seconds)
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     connections = get_config()
     with Monitor(connections) as mon:
         asyncio.run(mon.main())

@@ -15,11 +15,12 @@ This will not trigger on minor DZ packet loss, only substantial failures in the 
 
 ## Installation
 
-Edit the `config.py` file to configure the parameters to your liking.
+You can run the script from an unpriviledged user account or as root.
+Sudo access to the `nft` and `ip` commands should be granted to use this as an
+unpriviledged user.
 
-It is recommended that you run this script from the sol user account (assuming it also has
-access to the `doublezero` command line). Sudo access to the `nft` command
-should be granted to use this as an unpriviledged user. Running this in tmux/zellij
+Edit the `config.py` file to configure the parameters to your liking.
+Running this in tmux/zellij and monitoring the output
 is a viable way to test that the parameters are chosen correctly.
 
 For permanent install it is recommended to have a systemd service configured to
@@ -29,15 +30,8 @@ A systemd unit `doublezero_monitor.service` is provided, install as appropriate 
 sudo cp doublezero_monitor.service /etc/systemd/system/
 ```
 
-Keep in mind that when running as system service, the script will still need access to both `solana`
-and `doublezero` binaries to perform its function. To check, log in as a root user and verify
-that both commands can still be executed.
+Keep in mind that when running as system service, the script will run as root.
 
-In addition, you should make the DZ config available to the root user as follows:
-```bash
-mkdir -p /root/.config/doublezero/
-ln -s /home/sol/.config/doublezero/cli  /root/.config/doublezero/cli
-```
 
 ## For IBRL mode
 

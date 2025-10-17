@@ -9,12 +9,14 @@ import time
 from config import *
 from helpers import *
 
+
 @dataclasses.dataclass
 class StakedNode:
-    pubkey:str
+    pubkey: str
     ip_address: ipaddress.IPv4Address
     stake: int
     packet_count: int
+
 
 @dataclasses.dataclass
 class HealthRecord:
@@ -27,12 +29,15 @@ class HealthRecord:
     def __repr__(self) -> str:
         return f"({self.reachable_stake_fraction*100}% at {self.timestamp})"
 
+
 @dataclasses.dataclass
 class DZConnection:
     reachable_ips: set[ipaddress.IPv4Address] = dataclasses.field(default_factory=set)
-    health_records: deque[HealthRecord] = dataclasses.field(default_factory=lambda : deque(maxlen=100))
+    health_records: deque[HealthRecord] = dataclasses.field(
+        default_factory=lambda: deque(maxlen=100)
+    )
 
-    def get_best_in_period(self, grace_period_seconds:float)->float:
+    def get_best_in_period(self, grace_period_seconds: float) -> float:
         """Returns best quality observed in provided period, and 0
         if no observations were made."""
         now = time.time()
@@ -40,7 +45,9 @@ class DZConnection:
         for rec in self.health_records:
             age = now - rec.timestamp
             if age < grace_period_seconds:
-                best_in_grace_period = max(best_in_grace_period, rec.reachable_stake_fraction)
+                best_in_grace_period = max(
+                    best_in_grace_period, rec.reachable_stake_fraction
+                )
         return best_in_grace_period
 
     async def self_check(self) -> bool:
@@ -55,11 +62,12 @@ class DZConnection:
         else:
             self.reachable_ips = await get_doublezero_routes()
 
-    def is_reachable(self, ip:ipaddress.IPv4Address) -> bool:
+    def is_reachable(self, ip: ipaddress.IPv4Address) -> bool:
         return ip in self.reachable_ips
 
+
 class Monitor:
-    staked_nodes:dict[str, StakedNode] = {}
+    staked_nodes: dict[str, StakedNode] = {}
     connection: DZConnection
 
     def __init__(self) -> None:
@@ -95,7 +103,7 @@ class Monitor:
                 elif not self.connection.is_reachable(ip):
                     new_nodes.remove(pk)
 
-            to_remove_nodes = set(self.staked_nodes) -  set(new_staked)
+            to_remove_nodes = set(self.staked_nodes) - set(new_staked)
             for pk in to_remove_nodes:
                 print(f"Removing node {pk} from monitored set")
                 self.staked_nodes.pop(pk)
@@ -109,34 +117,34 @@ class Monitor:
                 # we only want to track counters for DZ-reachable nodes
                 if not self.connection.is_reachable(ip):
                     continue
-                self.staked_nodes[pk] = StakedNode(stake = new_staked[pk],
+                self.staked_nodes[pk] = StakedNode(
+                    stake=new_staked[pk],
                     ip_address=ip,
                     pubkey=pk,
-                    packet_count = 0,
+                    packet_count=0,
                 )
-                n+=1
+                n += 1
                 print(f"Add counter for {ip}")
                 nft_add_counter(ip)
-                added +=1
+                added += 1
                 # do not add too many conuters all at once to avoid blocking event loop
                 if added >= 10:
                     break
             print(f"Added {n} counters")
             await asyncio.sleep(NODE_REFRESH_INTERVAL_SECONDS)
 
-
-    async def passive_monitoring(self)->None:
+    async def passive_monitoring(self) -> None:
         """
         Check NFT counters for incoming traffic on active connections to check their health
         """
-        dead_nodes:defaultdict[str, int] = defaultdict(int)
+        dead_nodes: defaultdict[str, int] = defaultdict(int)
         while True:
             await asyncio.sleep(PASSIVE_MONITORING_INTERVAL_SECONDS)
             counters = get_nft_counters()
             reachable_stake = 0.0
             unreachable_stake = 0.0
             for pk, node in self.staked_nodes.items():
-                cnt = counters.get(node.ip_address,0)
+                cnt = counters.get(node.ip_address, 0)
                 diff = cnt - node.packet_count
                 node.packet_count = cnt
                 if not self.connection.is_reachable(node.ip_address):
@@ -153,25 +161,30 @@ class Monitor:
             if unreachable_stake == 0.0 and reachable_stake == 0.0:
                 print("No stake from DZ captured in counters...")
                 continue
-            rec = HealthRecord(reachable_stake_fraction=reachable_stake/(1+reachable_stake+unreachable_stake))
-            print(f"Monitoring: stake reachable {int(reachable_stake)}/{int(reachable_stake + unreachable_stake)} ({rec.reachable_stake_fraction:.1%})")
+            rec = HealthRecord(
+                reachable_stake_fraction=reachable_stake
+                / (1 + reachable_stake + unreachable_stake)
+            )
+            print(
+                f"Monitoring: stake reachable {int(reachable_stake)}/{int(reachable_stake + unreachable_stake)} ({rec.reachable_stake_fraction:.1%})"
+            )
             self.connection.health_records.append(rec)
             if rec.reachable_stake_fraction < STAKE_THRESHOLD:
                 print(f"missing packet counts per node: {dict(dead_nodes)}")
                 dead_nodes.clear()
 
-    async def main(self)->None:
+    async def main(self) -> None:
         async with task_group.TaskGroup() as tg:
             tg.create_task(self.refresh_staked_nodes())
             tg.create_task(self.passive_monitoring())
             tg.create_task(self.decision())
 
-    async def decision(self)->None:
+    async def decision(self) -> None:
         """
         Goes over the connections ensuring we are using the "best" one.
         """
         # sleep before truly starting this task so we have data to work with
-        await asyncio.sleep(NODE_REFRESH_INTERVAL_SECONDS*4)
+        await asyncio.sleep(NODE_REFRESH_INTERVAL_SECONDS * 4)
         while True:
             await asyncio.sleep(PASSIVE_MONITORING_INTERVAL_SECONDS)
 
@@ -187,6 +200,7 @@ class Monitor:
                 print(self.connection.health_records)
                 exit(1)
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     with Monitor() as mon:
         asyncio.run(mon.main())
